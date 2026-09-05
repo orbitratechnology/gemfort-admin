@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
-import { AdminPortal } from "@/components/admin-portal";
+import { AdminPortalShell } from "@/components/admin-portal-shell";
 
 export const metadata: Metadata = { title: "Users" };
 
 export default function UsersPage() {
-  return <AdminPortal section="users" />;
+  return <AdminPortalShell section="users" />;
 }

@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
-import { TooltipProvider } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
 const inter = Inter({
@@ -27,9 +26,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       lang="en"
       className={cn("h-full", "antialiased", "font-sans", inter.variable)}
     >
-      <body className="min-h-full bg-background font-sans text-foreground">
-        <TooltipProvider>{children}</TooltipProvider>
-      </body>
+      <body className="min-h-full bg-background font-sans text-foreground">{children}</body>
     </html>
   );
 }

@@ -9,7 +9,8 @@ import {
   signOut,
 } from "firebase/auth";
 import type { User } from "firebase/auth";
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { doc, getDoc } from "firebase/firestore";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
   Activity,
   BadgeCheck,
@@ -34,12 +35,14 @@ import {
   Settings,
   ShieldAlert,
   ShieldCheck,
+  Trash2,
   UsersRound,
   X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import {
   applyUserAction,
+  deleteGemShow,
   readGemShows,
   readOverview,
   readUsers,
@@ -52,9 +55,19 @@ import {
   type ReviewDecision,
   type UserAction,
 } from "@/lib/firebase/admin-data";
-import { getFirebaseAuth, getFirebaseConfigForDisplay } from "@/lib/firebase/client";
+import { getFirebaseAuth, getFirebaseConfigForDisplay, getFirebaseDb } from "@/lib/firebase/client";
 import { PortalLoading } from "@/components/portal-loading";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -133,8 +146,10 @@ import {
 } from "@/components/ui/sidebar";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
+import { TooltipProvider } from "@/components/ui/tooltip";
 
 export type PortalSection = "overview" | "users" | "verification" | "gem-shows" | "settings";
+export type PortalSectionMeta = { eyebrow: string; title: string; description: string };
 
 type AuthState =
   | { status: "loading" }
@@ -146,34 +161,6 @@ type UserDialogState = {
   user: DataRecord;
   action: UserAction;
 } | null;
-
-const sectionMeta: Record<PortalSection, { eyebrow: string; title: string; description: string }> = {
-  overview: {
-    eyebrow: "Operations center",
-    title: "Good morning, admin",
-    description: "A clear view of the people, trust signals, and content shaping GemFort today.",
-  },
-  users: {
-    eyebrow: "People",
-    title: "User management",
-    description: "Search accounts, understand their status, and take documented admin actions.",
-  },
-  verification: {
-    eyebrow: "Trust & safety",
-    title: "Verification queue",
-    description: "Work the oldest applications first and keep every decision traceable.",
-  },
-  "gem-shows": {
-    eyebrow: "Content studio",
-    title: "Gem Shows",
-    description: "Publish timely gemstone stories, exhibitions, and field updates to the app.",
-  },
-  settings: {
-    eyebrow: "Workspace",
-    title: "Admin settings",
-    description: "Review the connected Firebase project and the controls protecting this console.",
-  },
-};
 
 const navItems: Array<{ section: PortalSection; label: string; href: string; icon: LucideIcon }> = [
   { section: "overview", label: "Overview", href: "/", icon: LayoutDashboard },
@@ -399,41 +386,42 @@ function AppSidebar({ section, user, onSignOut }: { section: PortalSection; user
   );
 }
 
-function PortalFrame({ section, user, children, onSignOut }: { section: PortalSection; user: User; children: React.ReactNode; onSignOut: () => void }) {
-  const meta = sectionMeta[section];
+function PortalFrame({ section, meta, user, children, onSignOut }: { section: PortalSection; meta: PortalSectionMeta; user: User; children: React.ReactNode; onSignOut: () => void }) {
   return (
-    <SidebarProvider defaultOpen>
-      <AppSidebar section={section} user={user} onSignOut={onSignOut} />
-      <SidebarInset>
-        <header className="sticky top-0 z-20 flex min-h-18 items-center justify-between gap-4 border-b border-border/70 bg-background/95 px-4 backdrop-blur sm:px-6 lg:px-8">
-          <div className="flex min-w-0 items-center gap-3">
-            <SidebarTrigger className="shrink-0" />
-            <Separator orientation="vertical" className="hidden h-6 sm:block" />
-            <div className="min-w-0">
-              <p className="truncate text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">{meta.eyebrow}</p>
-              <h1 className="truncate text-base font-semibold tracking-tight sm:text-lg">{meta.title}</h1>
+    <TooltipProvider>
+      <SidebarProvider defaultOpen>
+        <AppSidebar section={section} user={user} onSignOut={onSignOut} />
+        <SidebarInset>
+          <header className="sticky top-0 z-20 flex min-h-18 items-center justify-between gap-4 border-b border-border/70 bg-background/95 px-4 backdrop-blur sm:px-6 lg:px-8">
+            <div className="flex min-w-0 items-center gap-3">
+              <SidebarTrigger className="shrink-0" />
+              <Separator orientation="vertical" className="hidden h-6 sm:block" />
+              <div className="min-w-0">
+                <p className="truncate text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">{meta.eyebrow}</p>
+                <h1 className="truncate text-base font-semibold tracking-tight sm:text-lg">{meta.title}</h1>
+              </div>
             </div>
-          </div>
-          <div className="flex shrink-0 items-center gap-2 sm:gap-3">
-            <Badge variant="outline" className="hidden gap-1.5 border-border text-muted-foreground sm:inline-flex">
-              <span className="size-1.5 rounded-full bg-primary" />
-              Live
-            </Badge>
-            <Button variant="ghost" size="icon" aria-label="Notifications">
-              <Bell />
-            </Button>
-            <Avatar size="sm" className="hidden sm:flex">
-              {user.photoURL && <AvatarImage src={user.photoURL} alt="" />}
-              <AvatarFallback>{initials(user.displayName || user.email || "GF")}</AvatarFallback>
-            </Avatar>
-          </div>
-        </header>
-        <main className="flex-1 px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
-          <div className="mx-auto flex w-full max-w-[1440px] flex-col gap-6">{children}</div>
-        </main>
-        <footer className="px-4 pb-6 text-center text-xs text-muted-foreground sm:px-8">GemFort Admin · Trust infrastructure for the GemFort network</footer>
-      </SidebarInset>
-    </SidebarProvider>
+            <div className="flex shrink-0 items-center gap-2 sm:gap-3">
+              <Badge variant="outline" className="hidden gap-1.5 border-border text-muted-foreground sm:inline-flex">
+                <span className="size-1.5 rounded-full bg-primary" />
+                Live
+              </Badge>
+              <Button variant="ghost" size="icon" aria-label="Notifications">
+                <Bell />
+              </Button>
+              <Avatar size="sm" className="hidden sm:flex">
+                {user.photoURL && <AvatarImage src={user.photoURL} alt="" />}
+                <AvatarFallback>{initials(user.displayName || user.email || "GF")}</AvatarFallback>
+              </Avatar>
+            </div>
+          </header>
+          <main className="flex-1 px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
+            <div className="mx-auto flex w-full max-w-[1440px] flex-col gap-6">{children}</div>
+          </main>
+          <footer className="px-4 pb-6 text-center text-xs text-muted-foreground sm:px-8">GemFort Admin · Trust infrastructure for the GemFort network</footer>
+        </SidebarInset>
+      </SidebarProvider>
+    </TooltipProvider>
   );
 }
 
@@ -453,9 +441,8 @@ function LoginScreen() {
       await signInWithEmailAndPassword(getFirebaseAuth(), email.trim(), password);
     } catch (submissionError) {
       setError(displayError(submissionError));
-    } finally {
-      setBusy(false);
     }
+    setBusy(false);
   }
 
   async function handleReset() {
@@ -559,7 +546,8 @@ function OverviewView() {
   async function load() {
     setRefreshing(true);
     setError("");
-    try { setData(await readOverview()); } catch (loadError) { setError(displayError(loadError)); } finally { setRefreshing(false); }
+    try { setData(await readOverview()); } catch (loadError) { setError(displayError(loadError)); }
+    setRefreshing(false);
   }
   useEffect(() => {
     let active = true;
@@ -633,7 +621,8 @@ function UsersView({ admin }: { admin: User }) {
 
   async function load() {
     setLoading(true); setError("");
-    try { setUsers(await readUsers()); } catch (loadError) { setError(displayError(loadError)); } finally { setLoading(false); }
+    try { setUsers(await readUsers()); } catch (loadError) { setError(displayError(loadError)); }
+    setLoading(false);
   }
   useEffect(() => {
     let active = true;
@@ -644,14 +633,14 @@ function UsersView({ admin }: { admin: User }) {
     return () => { active = false; };
   }, []);
 
-  const filteredUsers = useMemo(() => users.filter((user) => {
+  const filteredUsers = users.filter((user) => {
     const haystack = [valueOf(user, "displayName", ""), valueOf(user, "email", ""), valueOf(user, "phone", "")].join(" ").toLowerCase();
     const matchesText = !queryText || haystack.includes(queryText.toLowerCase());
     const matchesRole = role === "all" || valueOf(user, "role") === role;
     const userStatus = user.isSuspended === true ? "suspended" : valueOf(user, "verificationStatus", "none");
     const matchesStatus = status === "all" || userStatus === status;
     return matchesText && matchesRole && matchesStatus;
-  }), [users, queryText, role, status]);
+  });
 
   async function handleAction(reason: string) {
     if (!actionState) return;
@@ -704,7 +693,7 @@ function UserActionDialog({ state, onClose, onSubmit }: { state: UserDialogState
   const needsReason = action !== "reinstate";
   const title = action === "suspend" ? "Suspend account" : action === "ban" ? "Ban account" : action === "revoke_verification" ? "Revoke verification" : "Reinstate account";
   const description = action === "ban" ? "Ban is a permanent access restriction and should only be used after review." : action === "reinstate" ? "This will restore account access and clear the suspension reason." : "This action updates the shared user record, notifies the member, and creates an immutable audit entry.";
-  async function submit(event: FormEvent<HTMLFormElement>) { event.preventDefault(); setBusy(true); try { await onSubmit(reason); } finally { setBusy(false); } }
+  async function submit(event: FormEvent<HTMLFormElement>) { event.preventDefault(); setBusy(true); await onSubmit(reason).finally(() => setBusy(false)); }
   return <Dialog open={Boolean(state)} onOpenChange={(open) => !open && onClose()}><DialogContent><DialogHeader><DialogTitle>{title}</DialogTitle><DialogDescription>{description}</DialogDescription></DialogHeader><form className="flex flex-col gap-6" onSubmit={submit}><FieldSet><FieldGroup><Field><FieldLabel htmlFor="user-action-reason">Reason {needsReason ? "(required)" : "(optional)"}</FieldLabel><Textarea id="user-action-reason" placeholder={needsReason ? "Explain the decision for the member and audit log…" : "Optional note for the audit log…"} value={reason} onChange={(event) => setReason(event.target.value)} required={needsReason} maxLength={500} /><FieldDescription>{reason.length}/500 characters</FieldDescription></Field></FieldGroup></FieldSet><DialogFooter><Button type="button" variant="outline" onClick={onClose}>Cancel</Button><Button type="submit" variant={action === "ban" ? "destructive" : "default"} disabled={busy}>{busy ? <RefreshCw data-icon="inline-start" className="animate-spin" /> : <Check data-icon="inline-start" />}{busy ? "Saving…" : "Confirm action"}</Button></DialogFooter></form></DialogContent></Dialog>;
 }
 
@@ -719,7 +708,7 @@ function VerificationView({ admin }: { admin: User }) {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
-  async function load() { setLoading(true); setError(""); try { setApplications(await readVerifications()); } catch (loadError) { setError(displayError(loadError)); } finally { setLoading(false); } }
+  async function load() { setLoading(true); setError(""); try { setApplications(await readVerifications()); } catch (loadError) { setError(displayError(loadError)); } setLoading(false); }
   useEffect(() => {
     let active = true;
     void readVerifications()
@@ -734,7 +723,8 @@ function VerificationView({ admin }: { admin: User }) {
     if (!selected) return;
     if ((decision === "info_requested" || decision === "rejected") && notes.trim().length < 5) { setError("Add a clear note before requesting information or rejecting an application."); return; }
     setBusy(true); setError("");
-    try { await reviewVerification(selected.id, decision, admin, notes, decision === "approved" ? tier : undefined); setSuccess(decision === "approved" ? `Application approved as ${tier} verified.` : `Application marked ${decision.replaceAll("_", " ")}.`); setSelected(null); setNotes(""); await load(); } catch (decisionError) { setError(displayError(decisionError)); } finally { setBusy(false); }
+    try { await reviewVerification(selected.id, decision, admin, notes, decision === "approved" ? tier : undefined); setSuccess(decision === "approved" ? `Application approved as ${tier} verified.` : `Application marked ${decision.replaceAll("_", " ")}.`); setSelected(null); setNotes(""); await load(); } catch (decisionError) { setError(displayError(decisionError)); }
+    setBusy(false);
   }
 
   return <>
@@ -765,8 +755,10 @@ function GemShowsView({ admin }: { admin: User }) {
   const [success, setSuccess] = useState("");
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<DataRecord | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<DataRecord | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
 
-  async function load() { setLoading(true); setError(""); try { setShows(await readGemShows()); } catch (loadError) { setError(displayError(loadError)); } finally { setLoading(false); } }
+  async function load() { setLoading(true); setError(""); try { setShows(await readGemShows()); } catch (loadError) { setError(displayError(loadError)); } setLoading(false); }
   useEffect(() => {
     let active = true;
     void readGemShows()
@@ -780,15 +772,45 @@ function GemShowsView({ admin }: { admin: User }) {
     try { await saveGemShow(input, admin, file); setFormOpen(false); setEditing(null); setSuccess(input.id ? "Gem Show updated." : "Gem Show published to the shared Firebase project."); await load(); } catch (saveError) { throw new Error(displayError(saveError)); }
   }
 
+  async function handleDelete() {
+    if (!deleteTarget) return;
+    setDeleteBusy(true);
+    setError("");
+    try {
+      await deleteGemShow(deleteTarget, admin);
+      setDeleteTarget(null);
+      setSuccess("Gem Show deleted.");
+      await load();
+    } catch (deleteError) {
+      setError(displayError(deleteError));
+    }
+    setDeleteBusy(false);
+  }
+
   return <>
     <div className="flex flex-col justify-between gap-4 md:flex-row md:items-end"><div><p className="text-sm text-muted-foreground">Editorial inventory</p><h2 className="mt-1 text-2xl font-semibold tracking-tight">Stories worth showing</h2></div><Button onClick={() => { setEditing(null); setFormOpen(true); }}><Plus data-icon="inline-start" />New Gem Show</Button></div>
     {error && <ErrorAlert message={error} />}{success && <Alert><Check /><AlertTitle>Content saved</AlertTitle><AlertDescription>{success}</AlertDescription></Alert>}
-    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{loading ? [1, 2, 3].map((item) => <Card key={item}><Skeleton className="aspect-[16/9] w-full rounded-none" /><CardHeader><Skeleton className="h-5 w-2/3" /><Skeleton className="h-4 w-full" /></CardHeader></Card>) : shows.length ? shows.map((show) => <GemShowCard key={show.id} show={show} onEdit={() => { setEditing(show); setFormOpen(true); }} />) : <Card className="md:col-span-2 xl:col-span-3"><EmptyState icon={Gem} title="No Gem Shows yet" description="Create the first story for exhibitions, new collections, or moments from the gemstone trade." /></Card>}</div>
+    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{loading ? [1, 2, 3].map((item) => <Card key={item}><Skeleton className="aspect-[16/9] w-full rounded-none" /><CardHeader><Skeleton className="h-5 w-2/3" /><Skeleton className="h-4 w-full" /></CardHeader></Card>) : shows.length ? shows.map((show) => <GemShowCard key={show.id} show={show} onEdit={() => { setEditing(show); setFormOpen(true); }} onDelete={() => setDeleteTarget(show)} />) : <Card className="md:col-span-2 xl:col-span-3"><EmptyState icon={Gem} title="No Gem Shows yet" description="Create the first story for exhibitions, new collections, or moments from the gemstone trade." /></Card>}</div>
     <GemShowDialog key={`${editing?.id ?? "new"}-${formOpen ? "open" : "closed"}`} open={formOpen} show={editing} onClose={() => { setFormOpen(false); setEditing(null); }} onSave={handleSave} />
+    <AlertDialog open={Boolean(deleteTarget)} onOpenChange={(open) => !open && !deleteBusy && setDeleteTarget(null)}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete {deleteTarget ? valueOf(deleteTarget, "title", "this Gem Show") : "this Gem Show"}?</AlertDialogTitle>
+          <AlertDialogDescription>This permanently removes the Gem Show and its stored cover image from GemFort. This action cannot be undone.</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={deleteBusy}>Cancel</AlertDialogCancel>
+          <AlertDialogAction variant="destructive" disabled={deleteBusy} onClick={() => void handleDelete()}>
+            {deleteBusy ? <RefreshCw data-icon="inline-start" className="animate-spin" /> : <Trash2 data-icon="inline-start" />}
+            {deleteBusy ? "Deleting…" : "Delete Gem Show"}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   </>;
 }
 
-function GemShowCard({ show, onEdit }: { show: DataRecord; onEdit: () => void }) {
+function GemShowCard({ show, onEdit, onDelete }: { show: DataRecord; onEdit: () => void; onDelete: () => void }) {
   const imageUrl = valueOf(show, "imageUrl", "");
   const hasSupportedImage = (() => {
     try {
@@ -797,7 +819,7 @@ function GemShowCard({ show, onEdit }: { show: DataRecord; onEdit: () => void })
       return false;
     }
   })();
-  return <Card className="group"><div className="relative aspect-[16/9] overflow-hidden bg-secondary">{hasSupportedImage ? <Image src={imageUrl} alt="" fill sizes="(min-width: 1280px) 31vw, (min-width: 768px) 47vw, 100vw" className="object-cover transition-transform duration-300 group-hover:scale-[1.02]" /> : <div className="flex size-full items-center justify-center text-muted-foreground"><Gem className="size-10 opacity-40" /></div>}<div className="absolute left-3 top-3"><StatusBadge status={show.isVisible ? "active" : "hidden"} /></div></div><CardHeader><CardTitle className="line-clamp-2">{valueOf(show, "title", "Untitled Gem Show")}</CardTitle><CardDescription className="line-clamp-3">{valueOf(show, "description", "No description")}</CardDescription></CardHeader><CardFooter className="justify-between gap-3 border-t"><span className="text-xs text-muted-foreground">Updated {formatDate(show.updatedAt)}</span><Button variant="ghost" size="sm" onClick={onEdit}><Pencil data-icon="inline-start" />Edit</Button></CardFooter></Card>;
+  return <Card className="group"><div className="relative aspect-[16/9] overflow-hidden bg-secondary">{hasSupportedImage ? <Image src={imageUrl} alt="" fill sizes="(min-width: 1280px) 31vw, (min-width: 768px) 47vw, 100vw" className="object-cover transition-transform duration-300 group-hover:scale-[1.02]" /> : <div className="flex size-full items-center justify-center text-muted-foreground"><Gem className="size-10 opacity-40" /></div>}<div className="absolute left-3 top-3"><StatusBadge status={show.isVisible ? "active" : "hidden"} /></div></div><CardHeader><CardTitle className="line-clamp-2">{valueOf(show, "title", "Untitled Gem Show")}</CardTitle><CardDescription className="line-clamp-3">{valueOf(show, "description", "No description")}</CardDescription></CardHeader><CardFooter className="justify-between gap-3 border-t"><span className="text-xs text-muted-foreground">Updated {formatDate(show.updatedAt)}</span><div className="flex items-center gap-1"><Button variant="ghost" size="sm" onClick={onEdit}><Pencil data-icon="inline-start" />Edit</Button><Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={onDelete}><Trash2 data-icon="inline-start" />Delete</Button></div></CardFooter></Card>;
 }
 
 function GemShowDialog({ open, show, onClose, onSave }: { open: boolean; show: DataRecord | null; onClose: () => void; onSave: (input: GemShowInput, file?: File) => Promise<void> }) {
@@ -808,7 +830,7 @@ function GemShowDialog({ open, show, onClose, onSave }: { open: boolean; show: D
   const fileRef = useRef<File | undefined>(undefined);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  async function submit(event: FormEvent<HTMLFormElement>) { event.preventDefault(); setBusy(true); setError(""); try { await onSave({ id: show?.id, title, description, externalUrl, isVisible, imageUrl: show?.imageUrl ?? null }, fileRef.current); } catch (saveError) { setError(saveError instanceof Error ? saveError.message : "Could not save this Gem Show."); } finally { setBusy(false); } }
+  async function submit(event: FormEvent<HTMLFormElement>) { event.preventDefault(); setBusy(true); setError(""); try { await onSave({ id: show?.id, title, description, externalUrl, isVisible, imageUrl: show?.imageUrl ?? null }, fileRef.current); } catch (saveError) { setError(saveError instanceof Error ? saveError.message : "Could not save this Gem Show."); } setBusy(false); }
   return <Dialog open={open} onOpenChange={(nextOpen) => !nextOpen && onClose()}><DialogContent className="max-h-[calc(100svh-2rem)] overflow-y-auto sm:max-w-lg"><DialogHeader><DialogTitle>{show ? "Edit Gem Show" : "Create Gem Show"}</DialogTitle><DialogDescription>Keep the copy concise and use a strong image that is at least 800 × 600 px.</DialogDescription></DialogHeader><form className="flex flex-col gap-6" onSubmit={submit}><FieldSet><FieldGroup><Field><FieldLabel htmlFor="show-title">Title</FieldLabel><Input id="show-title" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Beruwala Sapphire Week" maxLength={120} required /><FieldDescription>{title.length}/120</FieldDescription></Field><Field><FieldLabel htmlFor="show-description">Description</FieldLabel><Textarea id="show-description" value={description} onChange={(event) => setDescription(event.target.value)} placeholder="A short story for the GemFort community…" maxLength={500} required /><FieldDescription>{description.length}/500 · Shown in the mobile feed.</FieldDescription></Field><Field><FieldLabel htmlFor="show-url">Link (optional)</FieldLabel><Input id="show-url" type="url" value={externalUrl} onChange={(event) => setExternalUrl(event.target.value)} placeholder="https://gemfort.app/events/sapphire-week" /><FieldDescription>Use an https:// link when the story has a destination.</FieldDescription></Field><Field><FieldLabel htmlFor="show-image">Cover image {show ? "(optional replacement)" : ""}</FieldLabel><Input id="show-image" type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => { fileRef.current = event.target.files?.[0]; }} /><FieldDescription>JPG, PNG, or WebP · maximum 10 MB. Files are stored under the admin-only Gem Shows path.</FieldDescription></Field><Field orientation="horizontal"><Switch id="show-visible" checked={isVisible} onCheckedChange={setIsVisible} /><FieldLabel htmlFor="show-visible">Visible in GemFort</FieldLabel></Field></FieldGroup></FieldSet>{error && <FieldError>{error}</FieldError>}<DialogFooter><Button type="button" variant="outline" onClick={onClose}>Cancel</Button><Button type="submit" disabled={busy}>{busy ? <RefreshCw data-icon="inline-start" className="animate-spin" /> : <Check data-icon="inline-start" />}{busy ? "Saving…" : show ? "Save changes" : "Publish Gem Show"}</Button></DialogFooter></form></DialogContent></Dialog>;
 }
 
@@ -823,7 +845,7 @@ function SettingsView({ user }: { user: User }) {
   </>;
 }
 
-export function AdminPortal({ section }: { section: PortalSection }) {
+export function AdminPortal({ section, meta }: { section: PortalSection; meta: PortalSectionMeta }) {
   const [authState, setAuthState] = useState<AuthState>({ status: "loading" });
   useEffect(() => {
     let active = true;
@@ -831,8 +853,6 @@ export function AdminPortal({ section }: { section: PortalSection }) {
       if (!user) { if (active) setAuthState({ status: "signed-out" }); return; }
       void (async () => {
         try {
-           const { getDoc, doc } = await import("firebase/firestore");
-           const { getFirebaseDb } = await import("@/lib/firebase/client");
            const profileSnapshot = await getDoc(doc(getFirebaseDb(), "users", user.uid));
           const profile = profileSnapshot.exists() ? ({ id: profileSnapshot.id, ...profileSnapshot.data() } as DataRecord) : null;
           if (!active) return;
@@ -850,5 +870,5 @@ export function AdminPortal({ section }: { section: PortalSection }) {
   if (authState.status === "signed-out") return <LoginScreen />;
   if (authState.status === "forbidden") return <ForbiddenScreen reason={authState.reason} onSignOut={signOutCurrentAdmin} />;
   const { user } = authState;
-  return <PortalFrame section={section} user={user} onSignOut={signOutCurrentAdmin}>{section === "overview" && <OverviewView />}{section === "users" && <UsersView admin={user} />}{section === "verification" && <VerificationView admin={user} />}{section === "gem-shows" && <GemShowsView admin={user} />}{section === "settings" && <SettingsView user={user} />}</PortalFrame>;
+  return <PortalFrame section={section} meta={meta} user={user} onSignOut={signOutCurrentAdmin}>{section === "overview" && <OverviewView />}{section === "users" && <UsersView admin={user} />}{section === "verification" && <VerificationView admin={user} />}{section === "gem-shows" && <GemShowsView admin={user} />}{section === "settings" && <SettingsView user={user} />}</PortalFrame>;
 }

@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
-import { AdminPortal } from "@/components/admin-portal";
+import { AdminPortalShell } from "@/components/admin-portal-shell";
 
 export const metadata: Metadata = { title: "Verification queue" };
 
 export default function VerificationPage() {
-  return <AdminPortal section="verification" />;
+  return <AdminPortalShell section="verification" />;
 }

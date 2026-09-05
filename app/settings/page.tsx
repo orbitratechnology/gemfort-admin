@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
-import { AdminPortal } from "@/components/admin-portal";
+import { AdminPortalShell } from "@/components/admin-portal-shell";
 
 export const metadata: Metadata = { title: "Settings" };
 
 export default function SettingsPage() {
-  return <AdminPortal section="settings" />;
+  return <AdminPortalShell section="settings" />;
 }

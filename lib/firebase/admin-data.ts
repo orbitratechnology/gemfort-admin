@@ -12,7 +12,7 @@ import {
   writeBatch,
 } from "firebase/firestore";
 import type { DocumentData, QueryConstraint } from "firebase/firestore";
-import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
+import { deleteObject, getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import type { User } from "firebase/auth";
 import { getFirebaseDb, getFirebaseStorage } from "@/lib/firebase/client";
 
@@ -264,6 +264,37 @@ export async function saveGemShow(input: GemShowInput, admin: User, file?: File)
     targetId: showRef.id,
     reason: input.id ? "Gem Show updated." : "Gem Show created.",
     metadata: { title },
+    createdAt: serverTimestamp(),
+  });
+  await batch.commit();
+}
+
+export async function deleteGemShow(show: DataRecord, admin: User) {
+  const db = getFirebaseDb();
+  const showRef = doc(db, "gem_shows", show.id);
+  const snapshot = await getDoc(showRef);
+  if (!snapshot.exists()) throw new Error("This Gem Show no longer exists.");
+
+  const imageUrl = snapshot.data().imageUrl;
+  if (typeof imageUrl === "string" && imageUrl) {
+    try {
+      await deleteObject(ref(getFirebaseStorage(), imageUrl));
+    } catch (error) {
+      const code = typeof error === "object" && error && "code" in error ? String(error.code) : "";
+      if (code !== "storage/object-not-found") throw error;
+    }
+  }
+
+  const batch = writeBatch(db);
+  batch.delete(showRef);
+  const actionRef = doc(collection(db, "admin_actions"));
+  batch.set(actionRef, {
+    adminUid: admin.uid,
+    actionType: "delete_gem_show",
+    targetType: "gem_show",
+    targetId: show.id,
+    reason: "Gem Show deleted.",
+    metadata: { title: snapshot.data().title ?? null },
     createdAt: serverTimestamp(),
   });
   await batch.commit();

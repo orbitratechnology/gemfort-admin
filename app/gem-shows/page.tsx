@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
-import { AdminPortal } from "@/components/admin-portal";
+import { AdminPortalShell } from "@/components/admin-portal-shell";
 
 export const metadata: Metadata = { title: "Gem Shows" };
 
 export default function GemShowsPage() {
-  return <AdminPortal section="gem-shows" />;
+  return <AdminPortalShell section="gem-shows" />;
 }
