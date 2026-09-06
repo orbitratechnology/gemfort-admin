@@ -7,7 +7,7 @@ import { VerificationReviewPanel } from "@/components/verification-review-panel"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
-const filters = ["all", "pending", "under_review", "info_requested"] as const;
+const filters = ["all", "pending", "under_review", "info_requested", "approved", "rejected"] as const;
 
 export function VerificationPage({ applications, status }: { applications: DataRecord[]; status: string }) {
   const visibleApplications = applications.filter((application) => status === "all" || application.status === status);

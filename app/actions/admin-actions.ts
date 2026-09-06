@@ -154,6 +154,10 @@ export async function reviewVerificationAction(input: {
   if (!["under_review", "approved", "info_requested", "rejected"].includes(input.decision)) {
     throw new Error("Unsupported verification decision.");
   }
+  if (notes.length > 1000) throw new Error("Admin notes cannot exceed 1000 characters.");
+  if (input.verificationTier !== undefined && !["basic", "full"].includes(input.verificationTier)) {
+    throw new Error("Unsupported verification tier.");
+  }
   if ((input.decision === "info_requested" || input.decision === "rejected") && notes.length < 5) {
     throw new Error("Add a clear note before requesting information or rejecting an application.");
   }
@@ -164,29 +168,47 @@ export async function reviewVerificationAction(input: {
   if (!applicationSnapshot.exists) throw new Error("This verification application no longer exists.");
 
   const application = applicationSnapshot.data() ?? {};
-  const [userSnapshot, businessSnapshot] = await Promise.all([
-    typeof application.applicantUid === "string" ? db.collection("users").doc(application.applicantUid).get() : null,
-    typeof application.businessId === "string" ? db.collection("businesses").doc(application.businessId).get() : null,
+  const currentStatus = typeof application.status === "string" ? application.status : "pending";
+  if (!["pending", "under_review", "info_requested"].includes(currentStatus)) {
+    throw new Error("This verification application has already been resolved.");
+  }
+  const applicantUid = typeof application.applicantUid === "string" ? application.applicantUid : null;
+  const requestedBusinessId =
+    typeof application.businessId === "string" && application.businessId !== "pending" ? application.businessId : null;
+  const [userSnapshot, requestedBusinessSnapshot] = await Promise.all([
+    applicantUid ? db.collection("users").doc(applicantUid).get() : null,
+    requestedBusinessId ? db.collection("businesses").doc(requestedBusinessId).get() : null,
   ]);
+  let businessSnapshot = requestedBusinessSnapshot?.exists ? requestedBusinessSnapshot : null;
+  if (!businessSnapshot && applicantUid) {
+    const ownerBusinessSnapshot = await db
+      .collection("businesses")
+      .where("ownerUid", "==", applicantUid)
+      .limit(1)
+      .get();
+    businessSnapshot = ownerBusinessSnapshot.docs[0] ?? null;
+  }
   const isFinal = input.decision === "approved" || input.decision === "rejected";
   const status = input.decision === "approved" ? "approved" : input.decision;
   const reason = notes || (input.decision === "approved" ? "Approved after document review." : "Admin review decision.");
+  const businessId = businessSnapshot?.id ?? requestedBusinessId;
+  const now = new Date();
   const batch = db.batch();
 
   batch.update(applicationRef, {
     status,
     adminUid: session.uid,
     adminNotes: notes,
-    reviewedAt: new Date(),
-    resolvedAt: isFinal ? new Date() : null,
-    ...(input.decision === "info_requested" ? { infoRequested: notes } : {}),
-    ...(input.decision === "rejected" ? { rejectionReason: notes } : {}),
+    reviewedAt: now,
+    resolvedAt: isFinal ? now : null,
+    infoRequested: input.decision === "info_requested" ? notes : null,
+    rejectionReason: input.decision === "rejected" ? notes : null,
   });
 
   if (userSnapshot?.exists) {
     batch.update(userSnapshot.ref, {
       verificationStatus: input.decision === "approved" ? "verified" : input.decision,
-      updatedAt: new Date(),
+      updatedAt: now,
     });
   }
 
@@ -194,9 +216,9 @@ export async function reviewVerificationAction(input: {
     batch.update(businessSnapshot.ref, {
       verificationStatus: input.decision === "approved" ? "verified" : input.decision,
       verificationTier: input.decision === "approved" ? input.verificationTier ?? "full" : "none",
-      verifiedAt: input.decision === "approved" ? new Date() : null,
+      verifiedAt: input.decision === "approved" ? now : null,
       verifiedByAdminUid: input.decision === "approved" ? session.uid : null,
-      updatedAt: new Date(),
+      updatedAt: now,
     });
   }
 
@@ -204,27 +226,13 @@ export async function reviewVerificationAction(input: {
     batch,
     session.uid,
     input.decision === "approved" ? "verify_business" : input.decision === "rejected" ? "reject_business" : "verification_info_requested",
-    "business",
-    typeof application.businessId === "string" ? application.businessId : applicationId,
+    businessId ? "business" : "verification_application",
+    businessId ?? applicationId,
     reason,
-    { applicationId, verificationTier: input.verificationTier ?? null },
+    { applicationId, businessId: businessId ?? null, verificationTier: input.verificationTier ?? null },
   );
 
-  if (typeof application.applicantUid === "string" && input.decision !== "under_review") {
-    const notificationRef = db.collection("notifications").doc();
-    batch.set(notificationRef, {
-      recipientUid: application.applicantUid,
-      type: input.decision === "approved" ? "verification_approved" : input.decision === "rejected" ? "verification_rejected" : "verification_info_requested",
-      title: input.decision === "approved" ? "Verification approved" : input.decision === "rejected" ? "Verification needs attention" : "More information requested",
-      message: reason,
-      referenceType: "verification_application",
-      referenceId: applicationId,
-      isRead: false,
-      isPushSent: false,
-      createdAt: new Date(),
-    });
-  }
-
+  // The mobile app's onVerificationStatusChanged trigger creates the applicant notification once the status changes.
   await batch.commit();
   revalidatePath("/verification");
   revalidatePath("/users");

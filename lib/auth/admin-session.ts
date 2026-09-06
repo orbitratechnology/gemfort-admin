@@ -2,6 +2,7 @@ import "server-only";
 
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import { connection } from "next/server";
 import { cache } from "react";
 import { getFirebaseAdminAuth, getFirebaseAdminDb } from "@/lib/firebase/admin";
 import { serializeDataRecord } from "@/lib/firebase/server-data";
@@ -22,6 +23,7 @@ export const getAdminSession = cache(async (): Promise<AdminSession | null> => {
   if (!sessionCookie) return null;
 
   try {
+    await connection();
     const decoded = await getFirebaseAdminAuth().verifySessionCookie(sessionCookie, true);
     const profileSnapshot = await getFirebaseAdminDb().collection("users").doc(decoded.uid).get();
     if (!profileSnapshot.exists) return null;
