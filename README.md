@@ -20,6 +20,21 @@ You can start editing the page by modifying `app/page.tsx`. The page auto-update
 
 The console uses the Inter typeface through `next/font`.
 
+## First admin setup
+
+The private `/setup` page is available only when both conditions are true:
+
+1. `ADMIN_BOOTSTRAP_TOKEN` is configured as a server-only environment variable with a random value of at least 32 characters.
+2. No document in `users` has `role: "admin"`.
+
+Generate a token locally with:
+
+```powershell
+node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
+```
+
+Put that value in `.env.local` for local setup, or in Vercel as an encrypted Production/Preview environment variable. Open `/setup`, enter the token and the first admin credentials, then remove the token from Vercel after setup. The server creates the Firebase Auth user and matching `users/{uid}` admin profile, and a Firestore bootstrap lock prevents a second first-admin claim. Never commit the token or place it in a `NEXT_PUBLIC_*` variable.
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:

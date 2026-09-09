@@ -1,6 +1,7 @@
 "use client";
 
 import { Gem, RefreshCw, ShieldCheck } from "lucide-react";
+import Link from "next/link";
 import { sendPasswordResetEmail, signInWithEmailAndPassword, signOut } from "firebase/auth";
 import { useRouter } from "next/navigation";
 import { useState, useTransition, type FormEvent } from "react";
@@ -108,7 +109,7 @@ export function AdminLogin() {
               <Button type="submit" className="h-11 w-full" disabled={isPending}>{isPending ? <RefreshCw data-icon="inline-start" className="animate-spin" /> : <ShieldCheck data-icon="inline-start" />}{isPending ? "Signing in…" : "Enter admin console"}</Button>
             </form>
           </CardContent>
-          <CardFooter className="border-t text-xs leading-relaxed text-muted-foreground">Access is checked against your Firebase <code>users</code> document. Regular accounts cannot enter this workspace.</CardFooter>
+          <CardFooter className="flex flex-col items-start gap-3 border-t text-xs leading-relaxed text-muted-foreground"><span>Access is checked against your Firebase <code>users</code> document. Regular accounts cannot enter this workspace.</span><Link className="font-medium text-foreground underline underline-offset-4" href="/setup">Set up the first admin</Link></CardFooter>
         </Card>
       </section>
     </div>
