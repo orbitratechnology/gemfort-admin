@@ -36,14 +36,14 @@ export function DetailTile({ label, value }: { label: string; value: string }) {
 
 export function MetricCard({ label, value, detail, icon: Icon }: { label: string; value: number | null | undefined; detail: string; icon: LucideIcon }) {
   return (
-    <Card className="min-w-0">
-      <CardHeader className="gap-4">
+    <Card className="min-w-0 [--card-spacing:--spacing(4)] sm:[--card-spacing:--spacing(6)]">
+      <CardHeader className="gap-3 sm:gap-4">
         <div className="flex size-10 items-center justify-center rounded-2xl bg-secondary text-secondary-foreground"><Icon aria-hidden="true" /></div>
         <CardDescription>{label}</CardDescription>
       </CardHeader>
-      <CardContent className="flex items-end justify-between gap-3">
-        <CardTitle className="text-3xl font-semibold tabular-nums">{value == null ? "—" : value.toLocaleString()}</CardTitle>
-        <span className="mb-1 text-right text-xs text-muted-foreground">{detail}</span>
+      <CardContent className="flex flex-col items-start gap-1 sm:flex-row sm:items-end sm:justify-between sm:gap-3">
+        <CardTitle className="text-2xl font-semibold tabular-nums sm:text-3xl">{value == null ? "—" : value.toLocaleString()}</CardTitle>
+        <span className="text-xs text-muted-foreground sm:mb-1 sm:text-right">{detail}</span>
       </CardContent>
     </Card>
   );

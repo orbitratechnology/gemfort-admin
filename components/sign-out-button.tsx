@@ -7,7 +7,7 @@ import { signOut } from "firebase/auth";
 import { getFirebaseAuth } from "@/lib/firebase/client";
 import { Button } from "@/components/ui/button";
 
-export function SignOutButton() {
+export function SignOutButton({ className }: { className?: string }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
 
@@ -22,10 +22,9 @@ export function SignOutButton() {
   }
 
   return (
-    <Button type="button" variant="outline" size="sm" onClick={handleSignOut} disabled={isPending}>
+    <Button type="button" variant="outline" size="sm" className={className} onClick={handleSignOut} disabled={isPending}>
       <LogOut data-icon="inline-start" />
-      <span className="hidden sm:inline">Sign out</span>
-      <span className="sr-only sm:hidden">Sign out</span>
+      <span>Sign out</span>
     </Button>
   );
 }

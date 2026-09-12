@@ -14,7 +14,7 @@ import { GemShowEditor } from "@/components/gem-show-editor";
 export function GemShowCreateButton() {
   const router = useRouter();
   const [open, setOpen] = useState(false);
-  return <><Button type="button" onClick={() => setOpen(true)}><Plus data-icon="inline-start" />New Gem Show</Button><GemShowEditor key={open ? "new-open" : "new-closed"} open={open} show={null} onClose={() => setOpen(false)} onSaved={() => { setOpen(false); router.refresh(); }} /></>;
+  return <><Button type="button" className="w-full sm:w-auto" onClick={() => setOpen(true)}><Plus data-icon="inline-start" />New Gem Show</Button><GemShowEditor key={open ? "new-open" : "new-closed"} open={open} show={null} onClose={() => setOpen(false)} onSaved={() => { setOpen(false); router.refresh(); }} /></>;
 }
 
 export function GemShowActions({ show }: { show: DataRecord }) {

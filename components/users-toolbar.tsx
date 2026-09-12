@@ -21,7 +21,7 @@ export function UsersFilters({ query, role }: { query: string; role: string }) {
         <div className="relative flex-1"><Search aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" /><Input className="pl-9" name="q" placeholder="Search name, email, or phone" defaultValue={query} /></div>
       </form>
       <div className="flex flex-wrap items-center gap-2" aria-label="Filter by role">
-        {roles.map((item) => <Link key={item} className={cn("inline-flex h-8 items-center justify-center rounded-4xl px-3 text-sm font-medium capitalize transition-colors", role === item ? "bg-secondary text-secondary-foreground" : "hover:bg-muted hover:text-foreground")} href={item === "all" ? `/users${query ? `?q=${encodeURIComponent(query)}` : ""}` : `/users?role=${item}${query ? `&q=${encodeURIComponent(query)}` : ""}`}>{item === "all" ? "All roles" : item.replaceAll("_", " ")}</Link>)}
+        {roles.map((item) => <Link key={item} className={cn("inline-flex h-9 items-center justify-center rounded-4xl px-3 text-sm font-medium capitalize transition-colors sm:h-8", role === item ? "bg-secondary text-secondary-foreground" : "hover:bg-muted hover:text-foreground")} href={item === "all" ? `/users${query ? `?q=${encodeURIComponent(query)}` : ""}` : `/users?role=${item}${query ? `&q=${encodeURIComponent(query)}` : ""}`}>{item === "all" ? "All roles" : item.replaceAll("_", " ")}</Link>)}
       </div>
     </div>
   );

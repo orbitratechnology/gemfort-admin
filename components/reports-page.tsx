@@ -121,7 +121,7 @@ function reportTypeLabel(value: unknown) {
 }
 
 function filterClassName(active: boolean) {
-  return `inline-flex h-8 items-center justify-center rounded-4xl px-3 text-sm font-medium transition-colors ${active ? "bg-secondary text-secondary-foreground" : "hover:bg-muted hover:text-foreground"}`;
+  return `inline-flex h-9 items-center justify-center rounded-4xl px-3 text-sm font-medium transition-colors sm:h-8 ${active ? "bg-secondary text-secondary-foreground" : "hover:bg-muted hover:text-foreground"}`;
 }
 
 function filterHref(status: string, type: string) {
