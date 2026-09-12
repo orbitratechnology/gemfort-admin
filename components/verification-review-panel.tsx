@@ -3,8 +3,9 @@
 import { Check, ChevronRight, ExternalLink, FileCheck2, FileImage, RefreshCw, X } from "lucide-react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { reviewVerificationAction } from "@/app/actions/admin-actions";
+import { BUSINESS_REPUTATION_BADGE_LABELS, isAutomaticBusinessReputationBadge, hasNicDocument, suggestBusinessReputationBadge, type AutomaticBusinessReputationBadge } from "@/lib/business-reputation";
 import type { DataRecord, ReviewDecision } from "@/lib/firebase/admin-data";
 import { displayError } from "@/lib/display-error";
 import { formatDate, valueOf } from "@/lib/admin-display";
@@ -70,7 +71,8 @@ export function VerificationReviewPanel({ application }: { application: DataReco
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [notes, setNotes] = useState(() => valueOf(application, "adminNotes", ""));
-  const [tier, setTier] = useState<"basic" | "full">("full");
+  const suggestedVerificationTier = suggestBusinessReputationBadge(application.documents);
+  const [assignedVerificationTier, setAssignedVerificationTier] = useState<AutomaticBusinessReputationBadge>(suggestedVerificationTier);
   const [error, setError] = useState("");
   const [isPending, startTransition] = useTransition();
   const status = valueOf(application, "status", "pending");
@@ -79,6 +81,11 @@ export function VerificationReviewPanel({ application }: { application: DataReco
   const documentLinks = entries.filter((entry) => entry.isLink);
   const documentDetails = entries.filter((entry) => !entry.isLink);
   const services = stringList(application.servicesOffered);
+  const suggestedTierLabel = BUSINESS_REPUTATION_BADGE_LABELS[suggestedVerificationTier];
+
+  useEffect(() => {
+    setAssignedVerificationTier(suggestedVerificationTier);
+  }, [suggestedVerificationTier]);
 
   function decide(decision: ReviewDecision) {
     setError("");
@@ -88,7 +95,7 @@ export function VerificationReviewPanel({ application }: { application: DataReco
           applicationId: application.id,
           decision,
           notes,
-          verificationTier: decision === "approved" ? tier : undefined,
+          verificationTier: decision === "approved" ? assignedVerificationTier : undefined,
         });
         setOpen(false);
         router.refresh();
@@ -150,6 +157,14 @@ export function VerificationReviewPanel({ application }: { application: DataReco
                 {!entries.length ? <p className="text-sm text-muted-foreground">No document details or links found.</p> : null}
               </section>
 
+              <section className="rounded-2xl border border-border/70 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div><p className="font-medium">Suggested default</p><p className="text-sm text-muted-foreground">Calculated from the submitted documents. Review and assign the final tier below.</p></div>
+                  <Badge>{suggestedTierLabel}</Badge>
+                </div>
+                {!hasNicDocument(application.documents) ? <p className="mt-3 text-sm text-destructive">NIC is required for every approved application.</p> : null}
+              </section>
+
               <Separator />
 
               <FieldGroup>
@@ -158,7 +173,23 @@ export function VerificationReviewPanel({ application }: { application: DataReco
                   <Textarea id={`verification-notes-${application.id}`} aria-invalid={Boolean(error)} value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Record what you verified or what is missing…" maxLength={1000} />
                   <FieldDescription>{notes.length}/1000 · Information requests and rejection reasons are visible to the applicant.</FieldDescription>
                 </Field>
-                {valueOf(application, "applicationType") !== "lapidary" ? <Field><FieldLabel>Approval tier</FieldLabel><Select value={tier} onValueChange={(value) => setTier((value as "basic" | "full") ?? "full")}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectGroup><SelectItem value="full">Full verified</SelectItem><SelectItem value="basic">Basic verified</SelectItem></SelectGroup></SelectContent></Select></Field> : null}
+                <Field>
+                  <FieldLabel htmlFor={`verification-tier-${application.id}`}>Verification tier to assign</FieldLabel>
+                  <Select value={assignedVerificationTier} onValueChange={(value) => isAutomaticBusinessReputationBadge(value) && setAssignedVerificationTier(value)}>
+                    <SelectTrigger id={`verification-tier-${application.id}`}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectGroup>
+                        <SelectItem value="member">Member</SelectItem>
+                        <SelectItem value="identity">Identity Verified</SelectItem>
+                        <SelectItem value="business">Business Verified</SelectItem>
+                        <SelectItem value="gem">Gem Verified</SelectItem>
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                  <FieldDescription>The selected tier is written only when an admin approves this application. Recognized is assigned separately by an admin.</FieldDescription>
+                </Field>
               </FieldGroup>
 
               {error ? <p className="text-sm text-destructive" role="alert">{error}</p> : null}

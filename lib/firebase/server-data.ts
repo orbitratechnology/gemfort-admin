@@ -89,6 +89,10 @@ export function readVerifications() {
   return readCollection("verification_applications", "submittedAt", "asc");
 }
 
+export function readReports() {
+  return readCollection("reports", "createdAt");
+}
+
 export function readGemShows() {
   return readCollection("gem_shows", "updatedAt");
 }

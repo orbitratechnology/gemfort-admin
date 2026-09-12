@@ -33,7 +33,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const decoded = await getFirebaseAdminAuth().verifyIdToken(idToken);
+    const decoded = await getFirebaseAdminAuth().verifyIdToken(idToken, true);
     const profileSnapshot = await getFirebaseAdminDb().collection("users").doc(decoded.uid).get();
     const profile = profileSnapshot.data();
     if (!profileSnapshot.exists || profile?.role !== "admin" || profile.isSuspended === true) {

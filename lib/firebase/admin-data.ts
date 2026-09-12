@@ -21,4 +21,10 @@ export type GemShowInput = {
 
 export type ReviewDecision = "under_review" | "approved" | "info_requested" | "rejected";
 
-export type UserAction = "suspend" | "ban" | "reinstate" | "revoke_verification";
+export type UserAction =
+  | "suspend"
+  | "ban"
+  | "reinstate"
+  | "revoke_verification"
+  | "grant_recognized_badge"
+  | "remove_recognized_badge";

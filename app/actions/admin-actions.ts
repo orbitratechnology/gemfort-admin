@@ -3,7 +3,8 @@
 import { revalidatePath } from "next/cache";
 import type { DocumentData, WriteBatch } from "firebase-admin/firestore";
 import type { GemShowInput, ReviewDecision, UserAction } from "@/lib/firebase/admin-data";
-import { getFirebaseAdminBucket, getFirebaseAdminDb } from "@/lib/firebase/admin";
+import { badgeFromVerificationTier, isAutomaticBusinessReputationBadge, hasNicDocument, suggestBusinessReputationBadge, type AutomaticBusinessReputationBadge } from "@/lib/business-reputation";
+import { getFirebaseAdminAuth, getFirebaseAdminBucket, getFirebaseAdminDb } from "@/lib/firebase/admin";
 import { requireAdminSession } from "@/lib/auth/admin-session";
 
 function requiredText(value: unknown, label: string, min: number, max: number) {
@@ -76,6 +77,25 @@ function addAuditAction(
   });
 }
 
+async function enforceFirebaseAuthState(userId: string, action: UserAction) {
+  if (action !== "suspend" && action !== "ban" && action !== "reinstate") return;
+
+  try {
+    const auth = getFirebaseAdminAuth();
+    if (action === "reinstate") {
+      await auth.updateUser(userId, { disabled: false });
+      return;
+    }
+
+    await auth.updateUser(userId, { disabled: true });
+    await auth.revokeRefreshTokens(userId);
+  } catch (error) {
+    const code = typeof error === "object" && error && "code" in error ? String(error.code) : "unknown";
+    console.error("user-auth-enforcement-failed", { userId, action, code });
+    throw new Error("Could not enforce this account action in Firebase Authentication.");
+  }
+}
+
 export async function applyUserActionAction(input: {
   userId: string;
   action: UserAction;
@@ -85,13 +105,13 @@ export async function applyUserActionAction(input: {
   const session = await requireAdminSession();
   const userId = requiredText(input.userId, "User ID", 1, 200);
   const reason = typeof input.reason === "string" ? input.reason.trim() : "";
-  if (!["suspend", "ban", "reinstate", "revoke_verification"].includes(input.action)) {
+  if (!["suspend", "ban", "reinstate", "revoke_verification", "grant_recognized_badge", "remove_recognized_badge"].includes(input.action)) {
     throw new Error("Unsupported account action.");
   }
-  if (["suspend", "ban", "revoke_verification"].includes(input.action) && reason.length < 5) {
+  if (["suspend", "ban", "revoke_verification", "grant_recognized_badge", "remove_recognized_badge"].includes(input.action) && reason.length < 5) {
     throw new Error("Add a clear reason before applying this action.");
   }
-  if (userId === session.uid && input.action !== "revoke_verification") {
+  if (userId === session.uid && ["suspend", "ban", "reinstate"].includes(input.action)) {
     throw new Error("You cannot suspend, ban, or reinstate your own admin account.");
   }
 
@@ -99,6 +119,38 @@ export async function applyUserActionAction(input: {
   const userRef = db.collection("users").doc(userId);
   const userSnapshot = await userRef.get();
   if (!userSnapshot.exists) throw new Error("This user no longer exists.");
+  const nicApplicationsSnapshot = input.action === "grant_recognized_badge"
+    ? await db.collection("verification_applications").where("applicantUid", "==", userId).limit(20).get()
+    : null;
+  const userData = userSnapshot.data() ?? {};
+  const hasReviewedNic =
+    (userData.nicVerified === true && userData.verificationStatus === "verified") ||
+    Boolean(nicApplicationsSnapshot?.docs.some((application) => {
+      const data = application.data();
+      return data.status === "approved" && hasNicDocument(data.documents);
+    }));
+  if (input.action === "grant_recognized_badge" && !hasReviewedNic) {
+    throw new Error("A NIC document must be reviewed before granting the Recognized tier.");
+  }
+  const managesBusiness = ["revoke_verification", "grant_recognized_badge", "remove_recognized_badge"].includes(input.action);
+  const businessQuerySnapshot = managesBusiness
+    ? await db.collection("businesses").where("ownerUid", "==", userId).limit(1).get()
+    : null;
+  const businessSnapshot = businessQuerySnapshot?.docs[0] ?? null;
+  const businessData = businessSnapshot?.data() ?? {};
+  const businessBadges =
+    businessData.badges && typeof businessData.badges === "object" && !Array.isArray(businessData.badges)
+      ? (businessData.badges as Record<string, unknown>)
+      : {};
+  const recognizedBadgeIsAssigned =
+    userData.recognizedBadge === true || businessBadges.businessReputation === "recognized";
+
+  // Disable and revoke before persisting a suspension so a failed Firestore
+  // write cannot leave the account usable. Reinstatement is intentionally
+  // ordered in the opposite direction so access is not restored early.
+  if (input.action === "suspend" || input.action === "ban") {
+    await enforceFirebaseAuthState(userId, input.action);
+  }
 
   const batch = db.batch();
   const userPatch =
@@ -106,8 +158,36 @@ export async function applyUserActionAction(input: {
       ? { isSuspended: false, isActive: true, suspendedReason: null, suspendedAt: null, updatedAt: new Date() }
       : input.action === "revoke_verification"
         ? { verificationStatus: "revoked", updatedAt: new Date() }
+        : input.action === "grant_recognized_badge" || input.action === "remove_recognized_badge"
+          ? {
+              recognizedBadge: input.action === "grant_recognized_badge",
+              recognizedBadgeAssignedByAdminUid: input.action === "grant_recognized_badge" ? session.uid : null,
+              recognizedBadgeAssignedAt: input.action === "grant_recognized_badge" ? new Date() : null,
+              updatedAt: new Date(),
+            }
         : { isSuspended: true, isActive: false, suspendedReason: reason, suspendedAt: new Date(), updatedAt: new Date() };
   batch.update(userRef, userPatch);
+
+  if (businessSnapshot) {
+    const businessPatch: Record<string, unknown> = { updatedAt: new Date() };
+    if (input.action === "grant_recognized_badge") {
+      businessPatch["badges.businessReputation"] = "recognized";
+      businessPatch.recognizedBadgeAssignedByAdminUid = session.uid;
+      businessPatch.recognizedBadgeAssignedAt = new Date();
+    } else if (input.action === "remove_recognized_badge") {
+      businessPatch["badges.businessReputation"] = badgeFromVerificationTier(businessData.verificationTier);
+      businessPatch.recognizedBadgeAssignedByAdminUid = null;
+      businessPatch.recognizedBadgeAssignedAt = null;
+    } else if (input.action === "revoke_verification") {
+      businessPatch.verificationStatus = "revoked";
+      businessPatch.verificationTier = "member";
+      businessPatch.verifiedAt = null;
+      businessPatch.verifiedByAdminUid = null;
+      businessPatch["badges.isVerified"] = false;
+      businessPatch["badges.businessReputation"] = recognizedBadgeIsAssigned ? "recognized" : "member";
+    }
+    batch.update(businessSnapshot.ref, businessPatch);
+  }
 
   addAuditAction(
     batch,
@@ -118,26 +198,37 @@ export async function applyUserActionAction(input: {
         ? "ban_user"
         : input.action === "reinstate"
           ? "reinstate_user"
-          : "revoke_verification",
+          : input.action === "revoke_verification"
+            ? "revoke_verification"
+            : input.action,
     "user",
     userId,
     reason || "Account reinstated after admin review.",
   );
 
-  const notificationRef = db.collection("notifications").doc();
-  batch.set(notificationRef, {
-    recipientUid: userId,
-    type: input.action === "reinstate" ? "account_action" : input.action === "revoke_verification" ? "verification_rejected" : "account_suspended",
-    title: input.action === "reinstate" ? "Account reinstated" : input.action === "revoke_verification" ? "Verification revoked" : input.action === "ban" ? "Account access restricted" : "Account suspended",
-    message: reason || "Your account is active again.",
-    referenceType: "user",
-    referenceId: userId,
-    isRead: false,
-    isPushSent: false,
-    createdAt: new Date(),
-  });
+  if (!["grant_recognized_badge", "remove_recognized_badge"].includes(input.action)) {
+    const notificationRef = db.collection("notifications").doc();
+    batch.set(notificationRef, {
+      recipientUid: userId,
+      type: input.action === "reinstate" ? "account_action" : input.action === "revoke_verification" ? "verification_rejected" : "account_suspended",
+      title: input.action === "reinstate" ? "Account reinstated" : input.action === "revoke_verification" ? "Verification revoked" : input.action === "ban" ? "Account access restricted" : "Account suspended",
+      message: reason || "Your account is active again.",
+      referenceType: "user",
+      referenceId: userId,
+      isRead: false,
+      isPushSent: false,
+      createdAt: new Date(),
+    });
+  }
 
   await batch.commit();
+
+  if (input.action === "reinstate") {
+    // If this fails, the profile is already active but Auth remains disabled;
+    // the Firestore trigger retries the Auth reconciliation and the user stays
+    // fail-closed until it succeeds.
+    await enforceFirebaseAuthState(userId, input.action);
+  }
   revalidatePath("/users");
 }
 
@@ -145,7 +236,7 @@ export async function reviewVerificationAction(input: {
   applicationId: string;
   decision: ReviewDecision;
   notes: string;
-  verificationTier?: "basic" | "full";
+  verificationTier?: AutomaticBusinessReputationBadge;
 }) {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("Invalid verification payload.");
   const session = await requireAdminSession();
@@ -155,11 +246,15 @@ export async function reviewVerificationAction(input: {
     throw new Error("Unsupported verification decision.");
   }
   if (notes.length > 1000) throw new Error("Admin notes cannot exceed 1000 characters.");
-  if (input.verificationTier !== undefined && !["basic", "full"].includes(input.verificationTier)) {
-    throw new Error("Unsupported verification tier.");
-  }
   if ((input.decision === "info_requested" || input.decision === "rejected") && notes.length < 5) {
     throw new Error("Add a clear note before requesting information or rejecting an application.");
+  }
+  const requestedVerificationTier = input.verificationTier;
+  const assignedVerificationTier = isAutomaticBusinessReputationBadge(requestedVerificationTier)
+    ? requestedVerificationTier
+    : null;
+  if (input.decision === "approved" && assignedVerificationTier === null) {
+    throw new Error("Select the verification tier to assign before approving this application.");
   }
 
   const db = getFirebaseAdminDb();
@@ -179,7 +274,10 @@ export async function reviewVerificationAction(input: {
     applicantUid ? db.collection("users").doc(applicantUid).get() : null,
     requestedBusinessId ? db.collection("businesses").doc(requestedBusinessId).get() : null,
   ]);
-  let businessSnapshot = requestedBusinessSnapshot?.exists ? requestedBusinessSnapshot : null;
+  const requestedBusinessIsOwned =
+    requestedBusinessSnapshot?.exists === true &&
+    requestedBusinessSnapshot.data()?.ownerUid === applicantUid;
+  let businessSnapshot = requestedBusinessIsOwned ? requestedBusinessSnapshot : null;
   if (!businessSnapshot && applicantUid) {
     const ownerBusinessSnapshot = await db
       .collection("businesses")
@@ -194,11 +292,28 @@ export async function reviewVerificationAction(input: {
   const businessId = businessSnapshot?.id ?? requestedBusinessId;
   const now = new Date();
   const batch = db.batch();
+  const suggestedVerificationTier = suggestBusinessReputationBadge(application.documents);
+  if (input.decision === "approved" && !hasNicDocument(application.documents)) {
+    throw new Error("A NIC document is required before approving verification.");
+  }
+  const applicantRecognizedBadge = userSnapshot?.data()?.recognizedBadge === true;
+  const existingBusinessBadges = businessSnapshot?.data()?.badges;
+  const existingBusinessRecognizedBadge =
+    existingBusinessBadges && typeof existingBusinessBadges === "object" && !Array.isArray(existingBusinessBadges)
+      ? (existingBusinessBadges as Record<string, unknown>).businessReputation === "recognized"
+      : false;
+  const publicBadge =
+    applicantRecognizedBadge || existingBusinessRecognizedBadge
+      ? "recognized"
+      : input.decision === "approved"
+        ? assignedVerificationTier ?? "member"
+        : "member";
 
   batch.update(applicationRef, {
     status,
     adminUid: session.uid,
     adminNotes: notes,
+    verificationTier: input.decision === "approved" ? assignedVerificationTier ?? "member" : "member",
     reviewedAt: now,
     resolvedAt: isFinal ? now : null,
     infoRequested: input.decision === "info_requested" ? notes : null,
@@ -208,6 +323,7 @@ export async function reviewVerificationAction(input: {
   if (userSnapshot?.exists) {
     batch.update(userSnapshot.ref, {
       verificationStatus: input.decision === "approved" ? "verified" : input.decision,
+      ...(input.decision === "approved" ? { nicVerified: true } : {}),
       updatedAt: now,
     });
   }
@@ -215,9 +331,11 @@ export async function reviewVerificationAction(input: {
   if (businessSnapshot?.exists) {
     batch.update(businessSnapshot.ref, {
       verificationStatus: input.decision === "approved" ? "verified" : input.decision,
-      verificationTier: input.decision === "approved" ? input.verificationTier ?? "full" : "none",
+      verificationTier: input.decision === "approved" ? assignedVerificationTier ?? "member" : "member",
       verifiedAt: input.decision === "approved" ? now : null,
       verifiedByAdminUid: input.decision === "approved" ? session.uid : null,
+      "badges.isVerified": input.decision === "approved",
+      "badges.businessReputation": publicBadge,
       updatedAt: now,
     });
   }
@@ -229,7 +347,13 @@ export async function reviewVerificationAction(input: {
     businessId ? "business" : "verification_application",
     businessId ?? applicationId,
     reason,
-    { applicationId, businessId: businessId ?? null, verificationTier: input.verificationTier ?? null },
+    {
+      applicationId,
+      businessId: businessId ?? null,
+      businessReputation: publicBadge,
+      suggestedVerificationTier,
+      verificationTier: input.decision === "approved" ? assignedVerificationTier ?? "member" : "member",
+    },
   );
 
   // The mobile app's onVerificationStatusChanged trigger creates the applicant notification once the status changes.
