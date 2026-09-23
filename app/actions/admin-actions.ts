@@ -296,24 +296,55 @@ export async function reviewVerificationAction(input: {
   if (input.decision === "approved" && !hasNicDocument(application.documents)) {
     throw new Error("A NIC document is required before approving verification.");
   }
-  const applicantRecognizedBadge = userSnapshot?.data()?.recognizedBadge === true;
-  const existingBusinessBadges = businessSnapshot?.data()?.badges;
+  const userData = userSnapshot?.data() ?? {};
+  const businessData = businessSnapshot?.data() ?? {};
+  const existingBusinessBadges = businessData.badges;
   const existingBusinessRecognizedBadge =
     existingBusinessBadges && typeof existingBusinessBadges === "object" && !Array.isArray(existingBusinessBadges)
       ? (existingBusinessBadges as Record<string, unknown>).businessReputation === "recognized"
       : false;
+  const existingBusinessReputation =
+    existingBusinessBadges && typeof existingBusinessBadges === "object" && !Array.isArray(existingBusinessBadges)
+      ? (existingBusinessBadges as Record<string, unknown>).businessReputation
+      : null;
+  const existingVerificationTier = badgeFromVerificationTier(businessData.verificationTier);
+  const existingPublicBadge =
+    existingBusinessReputation === "recognized"
+      ? "recognized"
+      : isAutomaticBusinessReputationBadge(existingBusinessReputation)
+        ? existingBusinessReputation
+        : existingVerificationTier;
+  const isPromotion =
+    application.isPromotion === true &&
+    (userData.verificationStatus === "verified" ||
+      businessData.verificationStatus === "verified" ||
+      businessData.badges?.isVerified === true);
+  const preserveExistingVerification = isPromotion && input.decision !== "approved";
+  const nextVerificationStatus =
+    input.decision === "approved"
+      ? "verified"
+      : preserveExistingVerification
+        ? "verified"
+        : input.decision;
+  const applicantRecognizedBadge = userData.recognizedBadge === true;
   const publicBadge =
     applicantRecognizedBadge || existingBusinessRecognizedBadge
       ? "recognized"
       : input.decision === "approved"
         ? assignedVerificationTier ?? "member"
-        : "member";
+        : isPromotion
+          ? existingPublicBadge
+          : "member";
 
   batch.update(applicationRef, {
     status,
     adminUid: session.uid,
     adminNotes: notes,
-    verificationTier: input.decision === "approved" ? assignedVerificationTier ?? "member" : "member",
+    verificationTier: input.decision === "approved"
+      ? assignedVerificationTier ?? "member"
+      : isPromotion
+        ? existingVerificationTier
+        : "member",
     reviewedAt: now,
     resolvedAt: isFinal ? now : null,
     infoRequested: input.decision === "info_requested" ? notes : null,
@@ -322,7 +353,7 @@ export async function reviewVerificationAction(input: {
 
   if (userSnapshot?.exists) {
     batch.update(userSnapshot.ref, {
-      verificationStatus: input.decision === "approved" ? "verified" : input.decision,
+      verificationStatus: nextVerificationStatus,
       ...(input.decision === "approved" ? { nicVerified: true } : {}),
       updatedAt: now,
     });
@@ -330,11 +361,19 @@ export async function reviewVerificationAction(input: {
 
   if (businessSnapshot?.exists) {
     batch.update(businessSnapshot.ref, {
-      verificationStatus: input.decision === "approved" ? "verified" : input.decision,
-      verificationTier: input.decision === "approved" ? assignedVerificationTier ?? "member" : "member",
-      verifiedAt: input.decision === "approved" ? now : null,
-      verifiedByAdminUid: input.decision === "approved" ? session.uid : null,
-      "badges.isVerified": input.decision === "approved",
+      verificationStatus: nextVerificationStatus,
+      verificationTier: input.decision === "approved"
+        ? assignedVerificationTier ?? "member"
+        : isPromotion
+          ? existingVerificationTier
+          : "member",
+      verifiedAt: input.decision === "approved" ? now : preserveExistingVerification ? businessData.verifiedAt ?? null : null,
+      verifiedByAdminUid: input.decision === "approved"
+        ? session.uid
+        : preserveExistingVerification
+          ? businessData.verifiedByAdminUid ?? null
+          : null,
+      "badges.isVerified": input.decision === "approved" || preserveExistingVerification,
       "badges.businessReputation": publicBadge,
       updatedAt: now,
     });
@@ -352,7 +391,11 @@ export async function reviewVerificationAction(input: {
       businessId: businessId ?? null,
       businessReputation: publicBadge,
       suggestedVerificationTier,
-      verificationTier: input.decision === "approved" ? assignedVerificationTier ?? "member" : "member",
+      verificationTier: input.decision === "approved"
+        ? assignedVerificationTier ?? "member"
+        : isPromotion
+          ? existingVerificationTier
+          : "member",
     },
   );
 

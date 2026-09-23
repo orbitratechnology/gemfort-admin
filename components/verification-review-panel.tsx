@@ -77,6 +77,7 @@ export function VerificationReviewPanel({ application }: { application: DataReco
   const [isPending, startTransition] = useTransition();
   const status = valueOf(application, "status", "pending");
   const isResolved = status === "approved" || status === "rejected";
+  const isPromotion = application.isPromotion === true;
   const entries = documentEntries(application.documents);
   const documentLinks = entries.filter((entry) => entry.isLink);
   const documentDetails = entries.filter((entry) => !entry.isLink);
@@ -118,6 +119,7 @@ export function VerificationReviewPanel({ application }: { application: DataReco
           <div className="flex flex-wrap items-center gap-2">
             <p className="truncate font-medium">{valueOf(application, "businessName", "Unnamed business")}</p>
             <StatusBadge status={status} />
+            {isPromotion ? <Badge variant="secondary">Promotion</Badge> : null}
           </div>
           <p className="mt-1 truncate text-sm text-muted-foreground">
             {valueOf(application, "applicantName", valueOf(application, "applicantUid"))} · <span className="capitalize">{valueOf(application, "applicationType", "business")}</span>
@@ -130,7 +132,7 @@ export function VerificationReviewPanel({ application }: { application: DataReco
       <Sheet open={open} onOpenChange={setOpen}>
         <SheetContent side="right" className="h-dvh max-h-dvh w-full overflow-hidden p-0 sm:!w-[min(92vw,48rem)] sm:!max-w-2xl">
           <SheetHeader className="border-b bg-secondary/50 pr-12">
-            <div className="flex items-center gap-2"><Badge variant="outline">Manual review</Badge><StatusBadge status={status} /></div>
+            <div className="flex items-center gap-2"><Badge variant="outline">Manual review</Badge><StatusBadge status={status} />{isPromotion ? <Badge variant="secondary">Promotion</Badge> : null}</div>
             <SheetTitle>{valueOf(application, "businessName", "Verification application")}</SheetTitle>
             <SheetDescription>Review the submitted identity, business information, and supporting documents before deciding.</SheetDescription>
           </SheetHeader>
